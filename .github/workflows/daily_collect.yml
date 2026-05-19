@@ -1,0 +1,30 @@
+name: 1. Codzienny zbiór domen (kolejka)
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 5:00 polskiego czasu - zbiera PRZED skanem
+  workflow_dispatch:        # możliwość ręcznego uruchomienia
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Ustaw Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Zainstaluj biblioteki
+        run: pip install requests gspread google-auth
+
+      - name: Zbierz domeny i zapisz do kolejki
+        run: python collect_domains.py
+        env:
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}

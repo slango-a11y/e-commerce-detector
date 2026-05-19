@@ -1,0 +1,41 @@
+name: Codzienny skan e-commerce .pl
+
+on:
+  schedule:
+    # Każdego dnia o 06:00 UTC = 08:00 polskiego czasu (lato)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    # Możliwość ręcznego uruchomienia jednym kliknięciem w GitHubie
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Ustaw Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Zainstaluj biblioteki
+        run: pip install -r requirements.txt
+
+      - name: Uruchom skan (wczorajsze domeny .pl, język polski)
+        run: |
+          python ecommerce_detector.py \
+            --date-from $(date -d 'yesterday' '+%Y-%m-%d') \
+            --date-to   $(date -d 'yesterday' '+%Y-%m-%d') \
+            --tld pl \
+            --lang pl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wyślij wyniki do Google Sheets
+        run: python send_to_sheets.py
+        env:
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}

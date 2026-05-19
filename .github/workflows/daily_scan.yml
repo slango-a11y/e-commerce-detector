@@ -29,7 +29,7 @@ jobs:
           python ecommerce_detector.py \
             --date-from $(date -d 'yesterday' '+%Y-%m-%d') \
             --date-to   $(date -d 'yesterday' '+%Y-%m-%d') \
-            --tld pl \
+            --tld pl,com,com.pl,eu,net,org \
             --lang pl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

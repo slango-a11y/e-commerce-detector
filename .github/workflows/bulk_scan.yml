@@ -1,0 +1,46 @@
+name: Jednorazowy skan masowy
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: 'Data od (RRRR-MM-DD)'
+        required: true
+        default: '2026-01-01'
+      date_to:
+        description: 'Data do (RRRR-MM-DD)'
+        required: true
+        default: '2026-05-17'
+
+jobs:
+  bulk_scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Ustaw Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Zainstaluj biblioteki
+        run: pip install -r requirements.txt
+
+      - name: Uruchom skan masowy
+        run: |
+          python ecommerce_detector.py \
+            --date-from ${{ github.event.inputs.date_from }} \
+            --date-to   ${{ github.event.inputs.date_to }} \
+            --tld pl,com,com.pl,eu,net,org \
+            --lang pl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wyślij wyniki do Google Sheets
+        run: python send_to_sheets.py
+        env:
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}

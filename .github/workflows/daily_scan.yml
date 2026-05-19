@@ -3,7 +3,7 @@ name: Codzienny skan e-commerce .pl
 on:
   schedule:
     # Każdego dnia o 06:00 UTC = 08:00 polskiego czasu (lato)
-    - cron: '0 6 * * *'
+    - cron: '0 4 * * *'
   workflow_dispatch:
     # Możliwość ręcznego uruchomienia jednym kliknięciem w GitHubie
 

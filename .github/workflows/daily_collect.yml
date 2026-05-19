@@ -20,7 +20,7 @@ jobs:
           python-version: '3.12'
 
       - name: Zainstaluj biblioteki
-        run: pip install requests gspread google-auth
+        run: pip install requests gspread google-auth aiohttp
 
       - name: Zbierz domeny i zapisz do kolejki
         run: python collect_domains.py

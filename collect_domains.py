@@ -37,7 +37,7 @@ SHEET_QUEUE  = "Kolejka"
 SHEET_NOW    = "Sklepy - od razu"
 SHEET_LATER  = "Sklepy - po 30 dniach"
  
-HEADER_QUEUE = ["data_rejestracji", "domena", "title", "strona_dziala", "platforma", "zeskanowano", "data_skanu"]
+HEADER_QUEUE = ["data_rejestracji", "domena", "title", "strona_dziala", "url_docelowy", "platforma", "zeskanowano", "data_skanu"]
 HEADER_SHOPS = ["domena", "title", "platforma", "url", "data_rejestracji", "data_skanu"]
  
 PLATFORMS = {
@@ -187,25 +187,26 @@ async def fetch_page(session, url):
             ssl=False,
         ) as resp:
             if 200 <= resp.status < 300:
-                return await resp.content.read(MAX_BYTES)
+                final_url = str(resp.url)
+                return await resp.content.read(MAX_BYTES), final_url
     except Exception:
         pass
-    return None
+    return None, None
  
 async def scan_domain(session, domain, semaphore):
     async with semaphore:
         for scheme in ("https", "http"):
-            raw = await fetch_page(session, f"{scheme}://{domain}")
+            raw, final_url = await fetch_page(session, f"{scheme}://{domain}")
             if raw:
                 html     = raw.decode("utf-8", errors="ignore")
                 title    = extract_title(html)
                 platform = detect_platform(html)
                 return {
-                    "domain":       domain,
-                    "title":        title,
-                    "platform":     platform,
-                    "url":          f"{scheme}://{domain}",
-                    "dziala":       "TAK",
+                    "domain":   domain,
+                    "title":    title,
+                    "platform": platform,
+                    "url":      final_url or f"{scheme}://{domain}",
+                    "dziala":   "TAK",
                 }
     return {
         "domain":   domain,
@@ -284,7 +285,7 @@ async def main():
     # 5. Zapisz kolejkę (wszystkie + title + dziala + platforma)
     print(f"\n💾 Zapisuję do '{SHEET_QUEUE}'...")
     batch_append(ws_queue,
-        [[today, r["domain"], r["title"], r["dziala"], r["platform"], "NIE", ""]
+        [[today, r["domain"], r["title"], r["dziala"], r["url"], r["platform"], "NIE", ""]
          for r in results],
         "[Kolejka]")
  

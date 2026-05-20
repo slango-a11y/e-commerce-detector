@@ -66,6 +66,13 @@ PLATFORMS = {
         "/sklep/userdata/",
         "skyshop",
     ],
+    "AtomStore": [
+        "atomstore.pl",
+        "atomstore",
+        "powered by: atomstore",
+        "powered by atomstore",
+        "utm_source=client_shop",
+    ],
     "SOTE": [
         "sote.pl", "sote-shop", "soteshop",
     ],
@@ -83,15 +90,43 @@ PLATFORMS = {
     ],
     "OpenCart": [
         "catalog/view/theme", "route=common/home", "index.php?route=",
+        "opencart",
     ],
     "BaseLinker": [
         "baselinker.com",
     ],
     "Selly": [
-        "selly.pl", "selly-cdn",
+        "selly.pl", "selly-cdn", "selly_",
+    ],
+    "Selesto": [
+        "selesto.pl",
+        "cdn.selesto.pl",
+        "selesto-",
+    ],
+    "TakeDrop": [
+        "takedrop.pl",
+        "takebuilder",
+        "taketrust",
+        "takedrop",
+    ],
+    "2ClickShop": [
+        "2clickshop",
+        "2click.pl",
     ],
     "Wix eCommerce": [
         "wixstatic.com", "wix.com",
+    ],
+    "Własny sklep": [
+        "dodaj do koszyka",
+        "add to cart",
+        "kup teraz",
+        "koszyk",
+        "id=\"cart\"",
+        "class=\"cart\"",
+        "class=\"basket\"",
+        "dodaj do koszyka",
+        "/cart",
+        "checkout",
     ],
 }
  

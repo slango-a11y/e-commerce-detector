@@ -35,7 +35,7 @@ SCOPES = [
  
 SHEET_QUEUE  = "Kolejka"
 SHEET_NOW    = "Sklepy - od razu"
-SHEET_LATER  = "Sklepy - po 30 dniach"
+SHEET_LATER  = "Sklepy - po 14 dniach"
 SHEET_FIRMS  = "Nowe firmy"
  
 HEADER_QUEUE = ["data_rejestracji", "domena", "title", "strona_dziala", "url_docelowy", "platforma", "rejestrator", "hosting", "zeskanowano", "data_skanu"]
@@ -150,7 +150,7 @@ def ensure_sheet(spreadsheet, name, header):
     try:
         ws = spreadsheet.worksheet(name)
     except gspread.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet(title=name, rows=500000, cols=len(header))
+        ws = spreadsheet.add_worksheet(title=name, rows=100000, cols=len(header))
         ws.append_row(header)
         print(f"  ✅ Utworzono zakładkę '{name}'")
     return ws

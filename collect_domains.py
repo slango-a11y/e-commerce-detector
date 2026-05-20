@@ -130,12 +130,8 @@ PLATFORMS = {
         "add to cart",
         "kup teraz",
         "koszyk",
-        "id=\"cart\"",
         "class=\"cart\"",
         "class=\"basket\"",
-        "dodaj do koszyka",
-        "/cart",
-        "checkout",
     ],
 }
  
@@ -467,3 +463,4 @@ async def main():
  
 if __name__ == "__main__":
     asyncio.run(main())
+ 

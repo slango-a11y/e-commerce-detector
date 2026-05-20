@@ -299,7 +299,30 @@ def detect_firm(html: str) -> str | None:
         return ", ".join(found[:5])  # max 5 słów kluczowych
     return None
  
-async def fetch_page(session, url):
+# Domeny zaparkowane / na sprzedaż — traktujemy jako "nie działa"
+PARKED_URLS = [
+    "sklep.premium.pl", "aftermarket.pl", "domeny.pl",
+    "sedo.com", "dan.com", "parkingcrew.net", "bodis.com",
+    "ddregistrar.pl", "nazwa.pl/sklep",
+]
+PARKED_TITLES = [
+    "oferta domeny", "domena na sprzedaż", "domain for sale",
+    "ta domena jest na sprzedaż", "buy this domain",
+    "domena jest dostępna", "jest dostępna na sprzedaż",
+    "oferta sprzedaży domeny", "parked domain",
+]
+ 
+def is_parked(final_url: str, title: str) -> bool:
+    """Zwraca True jeśli strona jest zaparkowana / na sprzedaż."""
+    url_lower = final_url.lower()
+    title_lower = title.lower()
+    if any(p in url_lower for p in PARKED_URLS):
+        return True
+    if any(p in title_lower for p in PARKED_TITLES):
+        return True
+    return False
+ 
+ 
     try:
         async with session.get(
             url,
@@ -320,8 +343,22 @@ async def scan_domain(session, domain, semaphore):
         for scheme in ("https", "http"):
             raw, final_url = await fetch_page(session, f"{scheme}://{domain}")
             if raw:
-                html     = raw.decode("utf-8", errors="ignore")
-                title    = extract_title(html)
+                html  = raw.decode("utf-8", errors="ignore")
+                title = extract_title(html)
+ 
+                # Sprawdź czy domena zaparkowana / na sprzedaż
+                if is_parked(final_url, title):
+                    return {
+                        "domain":    domain,
+                        "title":     title,
+                        "platform":  "brak danych",
+                        "url":       "",
+                        "dziala":    "NIE",
+                        "firm_kw":   None,
+                        "registrar": "",
+                        "hosting":   "",
+                    }
+ 
                 platform = detect_platform(html)
                 firm_kw  = detect_firm(html) if platform == "brak danych" else None
                 registrar, hosting = get_domain_info(domain)
@@ -463,4 +500,3 @@ async def main():
  
 if __name__ == "__main__":
     asyncio.run(main())
- 

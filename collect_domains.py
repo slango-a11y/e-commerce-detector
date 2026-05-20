@@ -10,7 +10,7 @@ Codziennie:
 Za 30 dni scan_from_queue.py → "Sklepy - po 30 dniach"
 """
  
-import os, re, datetime, time, json, asyncio
+import os, re, datetime, time, json, asyncio, socket
 import requests, gspread, aiohttp
 from google.oauth2.service_account import Credentials
  
@@ -36,9 +36,18 @@ SCOPES = [
 SHEET_QUEUE  = "Kolejka"
 SHEET_NOW    = "Sklepy - od razu"
 SHEET_LATER  = "Sklepy - po 30 dniach"
+SHEET_FIRMS  = "Nowe firmy"
  
-HEADER_QUEUE = ["data_rejestracji", "domena", "title", "strona_dziala", "url_docelowy", "platforma", "zeskanowano", "data_skanu"]
-HEADER_SHOPS = ["domena", "title", "platforma", "url", "data_rejestracji", "data_skanu"]
+HEADER_QUEUE = ["data_rejestracji", "domena", "title", "strona_dziala", "url_docelowy", "platforma", "rejestrator", "hosting", "zeskanowano", "data_skanu"]
+HEADER_SHOPS = ["domena", "title", "platforma", "url", "rejestrator", "hosting", "data_rejestracji", "data_skanu"]
+HEADER_FIRMS = ["domena", "title", "url", "rejestrator", "hosting", "data_rejestracji", "data_skanu", "slowa_kluczowe"]
+ 
+# Wykrywanie firm: KONTAKT + co najmniej jedno z FIRMA_KEYWORDS
+CONTACT_KEYWORDS = ["kontakt", "skontaktuj się", "contact"]
+FIRMA_KEYWORDS   = [
+    "o firmie", "o nas", "firma", "oferta", "rozwiązania",
+    "praca", "referencje", "kariera", "about us",
+]
  
 PLATFORMS = {
     "WooCommerce": [
@@ -176,7 +185,74 @@ def batch_append(ws, rows, label=""):
             time.sleep(BATCH_PAUSE)
     return saved
  
-# ── POBIERANIE DOMEN ──────────────────────────────────────────
+# ── REJESTRATOR I HOSTING ────────────────────────────────────
+ 
+def get_registrar(domain: str) -> str:
+    """Pobiera rejestratora domeny przez RDAP DNS.pl (dla .pl) lub rdap.org (inne)."""
+    try:
+        # Dla domen .pl używamy RDAP NASK
+        if domain.endswith(".pl"):
+            r = requests.get(
+                f"https://rdap.dns.pl/domain/{domain}",
+                timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+            )
+            if r.status_code == 200:
+                data = r.json()
+                # Szukaj rejestratora w entities
+                for entity in data.get("entities", []):
+                    roles = entity.get("roles", [])
+                    if "registrar" in roles:
+                        # Nazwa rejestratora
+                        vcardArray = entity.get("vcardArray", [])
+                        if vcardArray and len(vcardArray) > 1:
+                            for vcard in vcardArray[1]:
+                                if vcard[0] == "fn":
+                                    return str(vcard[3])[:80]
+                        # Fallback: handle
+                        return entity.get("handle", "")[:80]
+        else:
+            # Dla innych TLD używamy rdap.org
+            r = requests.get(
+                f"https://rdap.org/domain/{domain}",
+                timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+            )
+            if r.status_code == 200:
+                data = r.json()
+                for entity in data.get("entities", []):
+                    if "registrar" in entity.get("roles", []):
+                        vcardArray = entity.get("vcardArray", [])
+                        if vcardArray and len(vcardArray) > 1:
+                            for vcard in vcardArray[1]:
+                                if vcard[0] == "fn":
+                                    return str(vcard[3])[:80]
+    except Exception:
+        pass
+    return ""
+ 
+def get_hosting(domain: str) -> str:
+    """Pobiera nazwę hostingu przez IP → ipinfo.io."""
+    try:
+        ip = socket.gethostbyname(domain)
+        r = requests.get(
+            f"https://ipinfo.io/{ip}/org",
+            timeout=6, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        if r.status_code == 200:
+            org = r.text.strip()
+            # Format: "AS12345 OVH SAS" — usuwamy numer AS
+            org = re.sub(r"^AS\d+\s*", "", org)
+            return org[:80]
+    except Exception:
+        pass
+    return ""
+ 
+def get_domain_info(domain: str) -> tuple[str, str]:
+    """Zwraca (rejestrator, hosting) dla domeny."""
+    registrar = get_registrar(domain)
+    hosting   = get_hosting(domain)
+    return registrar, hosting
+ 
+ 
  
 def fetch_raw(url):
     try:
@@ -212,6 +288,21 @@ def detect_platform(html: str):
                 return platform
     return "brak danych"
  
+def detect_firm(html: str) -> str | None:
+    """
+    Zwraca znalezione słowa kluczowe jeśli strona wygląda jak firma,
+    None jeśli nie spełnia kryteriów.
+    Kryteria: ma KONTAKT + co najmniej jedno z FIRMA_KEYWORDS.
+    """
+    hl = html.lower()
+    has_contact = any(kw in hl for kw in CONTACT_KEYWORDS)
+    if not has_contact:
+        return None
+    found = [kw for kw in FIRMA_KEYWORDS if kw in hl]
+    if found:
+        return ", ".join(found[:5])  # max 5 słów kluczowych
+    return None
+ 
 async def fetch_page(session, url):
     try:
         async with session.get(
@@ -236,19 +327,27 @@ async def scan_domain(session, domain, semaphore):
                 html     = raw.decode("utf-8", errors="ignore")
                 title    = extract_title(html)
                 platform = detect_platform(html)
+                firm_kw  = detect_firm(html) if platform == "brak danych" else None
+                registrar, hosting = get_domain_info(domain)
                 return {
-                    "domain":   domain,
-                    "title":    title,
-                    "platform": platform,
-                    "url":      final_url or f"{scheme}://{domain}",
-                    "dziala":   "TAK",
+                    "domain":     domain,
+                    "title":      title,
+                    "platform":   platform,
+                    "url":        final_url or f"{scheme}://{domain}",
+                    "dziala":     "TAK",
+                    "firm_kw":    firm_kw,
+                    "registrar":  registrar,
+                    "hosting":    hosting,
                 }
     return {
-        "domain":   domain,
-        "title":    "",
-        "platform": "brak danych",
-        "url":      "",
-        "dziala":   "NIE",
+        "domain":     domain,
+        "title":      "",
+        "platform":   "brak danych",
+        "url":        "",
+        "dziala":     "NIE",
+        "firm_kw":    None,
+        "registrar":  "",
+        "hosting":    "",
     }
  
 async def scan_all(domains):
@@ -268,8 +367,11 @@ async def scan_all(domains):
             if r["platform"] != "brak danych":
                 shops += 1
                 print(f"  🛒 {r['domain']} → {r['platform']} | {r['title'][:50]}")
+            elif r["firm_kw"]:
+                print(f"  🏢 {r['domain']} → firma | {r['title'][:40]} | [{r['firm_kw']}]")
             if done % 200 == 0:
-                print(f"  ... {done}/{len(domains)} | działa: {sum(1 for x in results if x['dziala']=='TAK')} | sklepy: {shops}")
+                firms = sum(1 for x in results if x.get("firm_kw"))
+                print(f"  ... {done}/{len(domains)} | działa: {sum(1 for x in results if x['dziala']=='TAK')} | sklepy: {shops} | firmy: {firms}")
  
     dziala = sum(1 for r in results if r["dziala"] == "TAK")
     print(f"\n✅ Skan gotowy — działa: {dziala}/{len(domains)} | sklepy od razu: {shops}")
@@ -305,6 +407,7 @@ async def main():
     ws_queue = ensure_sheet(sh, SHEET_QUEUE,  HEADER_QUEUE)
     ws_now   = ensure_sheet(sh, SHEET_NOW,    HEADER_SHOPS)
     ws_later = ensure_sheet(sh, SHEET_LATER,  HEADER_SHOPS)
+    ws_firms = ensure_sheet(sh, SHEET_FIRMS,  HEADER_FIRMS)
  
     # 3. Duplikaty
     existing    = get_existing_domains(ws_queue, col=2)
@@ -317,35 +420,49 @@ async def main():
     # 4. Skanuj natychmiast
     results = await scan_all(new_domains)
  
-    # 5. Zapisz kolejkę (wszystkie + title + dziala + platforma)
+    # 5. Zapisz kolejkę (wszystkie + title + dziala + platforma + rejestrator + hosting)
     print(f"\n💾 Zapisuję do '{SHEET_QUEUE}'...")
     batch_append(ws_queue,
-        [[today, r["domain"], r["title"], r["dziala"], r["url"], r["platform"], "NIE", ""]
+        [[today, r["domain"], r["title"], r["dziala"], r["url"],
+          r["platform"], r["registrar"], r["hosting"], "NIE", ""]
          for r in results],
         "[Kolejka]")
  
-    # 6. Zapisz sklepy wykryte od razu (tylko te z rozpoznaną platformą)
+    # 6. Zapisz sklepy wykryte od razu
     shops_now = [r for r in results if r["platform"] != "brak danych"]
     if shops_now:
         print(f"\n🛒 Zapisuję {len(shops_now)} sklepów do '{SHEET_NOW}'...")
         batch_append(ws_now,
-            [[r["domain"], r["title"], r["platform"], r["url"], today, today]
+            [[r["domain"], r["title"], r["platform"], r["url"],
+              r["registrar"], r["hosting"], today, today]
              for r in shops_now],
             "[Sklepy-od-razu]")
+ 
+    # 7. Zapisz nowe firmy
+    firms_now = [r for r in results if r.get("firm_kw") and r["platform"] == "brak danych"]
+    if firms_now:
+        print(f"\n🏢 Zapisuję {len(firms_now)} firm do '{SHEET_FIRMS}'...")
+        batch_append(ws_firms,
+            [[r["domain"], r["title"], r["url"],
+              r["registrar"], r["hosting"], today, today, r["firm_kw"]]
+             for r in firms_now],
+            "[Nowe-firmy]")
  
     # Podsumowanie
     from collections import Counter
     dziala = sum(1 for r in results if r["dziala"] == "TAK")
+    firms_now = [r for r in results if r.get("firm_kw") and r["platform"] == "brak danych"]
     print(f"\n{'='*55}")
     print(f"  GOTOWE!")
     print(f"  Nowych domen:            {len(new_domains)}")
     print(f"  Strony które działają:   {dziala}")
     print(f"  Sklepy wykryte od razu:  {len(shops_now)}")
+    print(f"  Nowe firmy:              {len(firms_now)}")
     if shops_now:
         print(f"\n  Platformy:")
         for p, n in Counter(r["platform"] for r in shops_now).most_common():
             print(f"    {p}: {n}")
-    print(f"  Za 30 dni: druga runda w '{SHEET_LATER}'")
+    print(f"  Za 14 dni: druga runda w '{SHEET_LATER}'")
     print(f"{'='*55}")
  
 if __name__ == "__main__":

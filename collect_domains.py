@@ -45,7 +45,7 @@ HEADER_FIRMS = ["domena", "title", "url", "rejestrator", "hosting", "data_rejest
 # Wykrywanie firm: KONTAKT + co najmniej jedno z FIRMA_KEYWORDS
 CONTACT_KEYWORDS = ["kontakt", "skontaktuj się", "contact"]
 FIRMA_KEYWORDS   = [
-    "o firmie", "o nas", "firma", "oferta", "rozwiązania",
+    "o firmie", "o nas", "firma", "rozwiązania",
     "praca", "referencje", "kariera", "about us",
 ]
  

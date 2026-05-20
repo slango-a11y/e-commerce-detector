@@ -46,7 +46,7 @@ HEADER_FIRMS = ["domena", "title", "url", "rejestrator", "hosting", "data_rejest
 CONTACT_KEYWORDS = ["kontakt", "skontaktuj się", "contact"]
 FIRMA_KEYWORDS   = [
     "o firmie", "o nas", "firma", "rozwiązania",
-    "praca", "referencje", "kariera", "about us",
+    "praca", "referencje", "kariera", "about us", "blog",
 ]
  
 PLATFORMS = {

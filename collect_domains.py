@@ -323,6 +323,7 @@ def is_parked(final_url: str, title: str) -> bool:
     return False
  
  
+async def fetch_page(session, url):
     try:
         async with session.get(
             url,

@@ -1,0 +1,27 @@
+name: Jednorazowy skan 10 dni
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bulk_scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Ustaw Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Zainstaluj biblioteki
+        run: pip install requests gspread google-auth aiohttp
+
+      - name: Uruchom skan 10 dni
+        run: python bulk_scan_10days.py
+        env:
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}

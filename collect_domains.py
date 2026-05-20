@@ -150,7 +150,7 @@ def ensure_sheet(spreadsheet, name, header):
     try:
         ws = spreadsheet.worksheet(name)
     except gspread.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet(title=name, rows=50000, cols=len(header))
+        ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=len(header))
         ws.append_row(header)
         print(f"  ✅ Utworzono zakładkę '{name}'")
     return ws

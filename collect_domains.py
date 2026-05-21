@@ -129,9 +129,7 @@ PLATFORMS = {
         "dodaj do koszyka",
         "add to cart",
         "kup teraz",
-        "koszyk",
-        "class=\"cart\"",
-        "class=\"basket\"",
+        "do koszyka",
     ],
 }
  
@@ -310,17 +308,28 @@ PARKED_TITLES = [
     "ta domena jest na sprzedaż", "buy this domain",
     "domena jest dostępna", "jest dostępna na sprzedaż",
     "oferta sprzedaży domeny", "parked domain",
+    "premium.pl - międzynarodowa giełda",
+    "strona w budowie", "coming soon",
+]
+ 
+# Słowa które dyskwalifikują stronę jako sklep/firmę
+EXCLUDED_TITLES = [
+    "casino", "kasyno", "zakłady sportowe", "bukmacher",
+    "darmowe spiny", "bonus bez depozytu", "sloty",
+    "poker online", "ruletka online",
 ]
  
 def is_parked(final_url: str, title: str) -> bool:
-    """Zwraca True jeśli strona jest zaparkowana / na sprzedaż."""
-    url_lower = final_url.lower()
+    url_lower   = final_url.lower()
     title_lower = title.lower()
-    if any(p in url_lower for p in PARKED_URLS):
-        return True
-    if any(p in title_lower for p in PARKED_TITLES):
-        return True
+    if any(p in url_lower   for p in PARKED_URLS):   return True
+    if any(p in title_lower for p in PARKED_TITLES): return True
     return False
+ 
+def is_gambling(title: str) -> bool:
+    """Zwraca True jeśli strona to kasyno/bukmacher."""
+    tl = title.lower()
+    return any(kw in tl for kw in EXCLUDED_TITLES)
  
  
 async def fetch_page(session, url):
@@ -349,6 +358,19 @@ async def scan_domain(session, domain, semaphore):
  
                 # Sprawdź czy domena zaparkowana / na sprzedaż
                 if is_parked(final_url, title):
+                    return {
+                        "domain":    domain,
+                        "title":     title,
+                        "platform":  "brak danych",
+                        "url":       "",
+                        "dziala":    "NIE",
+                        "firm_kw":   None,
+                        "registrar": "",
+                        "hosting":   "",
+                    }
+ 
+                # Wyklucz kasyna i bukmacherów
+                if is_gambling(title):
                     return {
                         "domain":    domain,
                         "title":     title,

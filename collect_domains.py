@@ -384,7 +384,15 @@ async def scan_domain(session, domain, semaphore):
  
                 platform = detect_platform(html)
                 firm_kw  = detect_firm(html) if platform == "brak danych" else None
-                registrar, hosting = get_domain_info(domain)
+ 
+                # Pobierz rejestratora i hosting TYLKO dla sklepów i firm
+                is_shop = platform != "brak danych"
+                is_firm = firm_kw is not None
+                if is_shop or is_firm:
+                    registrar, hosting = get_domain_info(domain)
+                else:
+                    registrar, hosting = "", ""
+ 
                 return {
                     "domain":     domain,
                     "title":      title,

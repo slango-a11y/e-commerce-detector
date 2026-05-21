@@ -27,6 +27,7 @@ SOURCES = [
     "https://raw.githubusercontent.com/whoisextractor/newly-registered-domains/main/nrd-1d.txt",
     "https://raw.githubusercontent.com/cenk/nrd/main/nrd-last-10-days.txt",
     # shreshta-labs — prawdziwe NRD (tygodniowe i miesięczne)
+    "https://raw.githubusercontent.com/shreshta-labs/newly-registered-domains/main/nrd-1w.csv",
 ]
  
 SCOPES = [
@@ -52,7 +53,12 @@ FIRMA_KEYWORDS   = [
  
 PLATFORMS = {
     "WooCommerce": [
-        "wp-content/plugins/woocommerce", "woocommerce", "wc-ajax",
+        "wp-content/plugins/woocommerce",
+        "woocommerce-cart",
+        "woocommerce-checkout",
+        "add-to-cart",
+        "wc-ajax=get_refreshed_fragments",
+        "woocommerce-product",
     ],
     "Shopify": [
         "cdn.shopify.com", "Shopify.theme", "shopify-section", "/cdn/shop/",
@@ -558,3 +564,4 @@ async def main():
  
 if __name__ == "__main__":
     asyncio.run(main())
+ 

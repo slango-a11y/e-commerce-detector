@@ -1,28 +1,28 @@
-name: 2. Codzienny skan (domeny sprzed 30 dni)
-
+name: 2. Codzienny skan (domeny sprzed 14 dni)
+ 
 on:
   schedule:
     - cron: '0 4 * * *'   # 6:00 polskiego czasu - skanuje PO zebraniu
   workflow_dispatch:
-
+ 
 jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
+ 
     steps:
       - name: Pobierz kod
         uses: actions/checkout@v4
-
+ 
       - name: Ustaw Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
+ 
       - name: Zainstaluj biblioteki
         run: pip install -r requirements.txt
-
-      - name: Skanuj domeny sprzed 30 dni
+ 
+      - name: Skanuj domeny sprzed 14 dni
         run: python scan_from_queue.py
         env:
           SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}

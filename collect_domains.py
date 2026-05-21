@@ -383,27 +383,29 @@ async def scan_domain(session, domain, semaphore):
                 # Sprawdź czy domena zaparkowana / na sprzedaż
                 if is_parked(final_url, title):
                     return {
-                        "domain":    domain,
-                        "title":     title,
-                        "platform":  "brak danych",
-                        "url":       "",
-                        "dziala":    "NIE",
-                        "firm_kw":   None,
-                        "registrar": "",
-                        "hosting":   "",
+                        "domain":         domain,
+                        "title":          title,
+                        "platform":       "brak danych",
+                        "url":            "",
+                        "dziala":         "NIE",
+                        "firm_kw":        None,
+                        "registrar":      "",
+                        "hosting":        "",
+                        "reg_date_whois": "",
                     }
  
                 # Wyklucz kasyna i bukmacherów
                 if is_gambling(title):
                     return {
-                        "domain":    domain,
-                        "title":     title,
-                        "platform":  "brak danych",
-                        "url":       "",
-                        "dziala":    "NIE",
-                        "firm_kw":   None,
-                        "registrar": "",
-                        "hosting":   "",
+                        "domain":         domain,
+                        "title":          title,
+                        "platform":       "brak danych",
+                        "url":            "",
+                        "dziala":         "NIE",
+                        "firm_kw":        None,
+                        "registrar":      "",
+                        "hosting":        "",
+                        "reg_date_whois": "",
                     }
  
                 platform = detect_platform(html)

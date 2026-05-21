@@ -26,6 +26,8 @@ BATCH_PAUSE = 3
 SOURCES = [
     "https://raw.githubusercontent.com/whoisextractor/newly-registered-domains/main/nrd-1d.txt",
     "https://raw.githubusercontent.com/cenk/nrd/main/nrd-last-10-days.txt",
+    # shreshta-labs — prawdziwe NRD (tygodniowe i miesięczne)
+    "https://raw.githubusercontent.com/shreshta-labs/newly-registered-domains/main/nrd-1w.csv",
 ]
  
 SCOPES = [
@@ -38,9 +40,9 @@ SHEET_NOW    = "Sklepy - od razu"
 SHEET_LATER  = "Sklepy - po 14 dniach"
 SHEET_FIRMS  = "Nowe firmy"
  
-HEADER_QUEUE = ["data_rejestracji", "domena", "title", "strona_dziala", "url_docelowy", "platforma", "rejestrator", "hosting", "zeskanowano", "data_skanu"]
-HEADER_SHOPS = ["domena", "title", "platforma", "url", "rejestrator", "hosting", "data_rejestracji", "data_skanu"]
-HEADER_FIRMS = ["domena", "title", "url", "rejestrator", "hosting", "data_rejestracji", "data_skanu", "slowa_kluczowe"]
+HEADER_QUEUE = ["data_rejestracji", "domena", "title", "strona_dziala", "url_docelowy", "platforma", "rejestrator", "hosting", "data_rejestracji_whois", "zeskanowano", "data_skanu"]
+HEADER_SHOPS = ["domena", "title", "platforma", "url", "rejestrator", "hosting", "data_rejestracji_whois", "data_rejestracji", "data_skanu"]
+HEADER_FIRMS = ["domena", "title", "url", "rejestrator", "hosting", "data_rejestracji_whois", "data_rejestracji", "data_skanu", "slowa_kluczowe"]
  
 # Wykrywanie firm: KONTAKT + co najmniej jedno z FIRMA_KEYWORDS
 CONTACT_KEYWORDS = ["kontakt", "skontaktuj się", "contact"]
@@ -240,11 +242,33 @@ def get_hosting(domain: str) -> str:
         pass
     return ""
  
-def get_domain_info(domain: str) -> tuple[str, str]:
-    """Zwraca (rejestrator, hosting) dla domeny."""
-    registrar = get_registrar(domain)
-    hosting   = get_hosting(domain)
-    return registrar, hosting
+def get_registration_date(domain: str) -> str:
+    """Pobiera datę rejestracji domeny przez RDAP."""
+    try:
+        if domain.endswith(".pl"):
+            url = f"https://rdap.dns.pl/domain/{domain}"
+        else:
+            url = f"https://rdap.org/domain/{domain}"
+        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            data = r.json()
+            # Szukaj daty rejestracji w events
+            for event in data.get("events", []):
+                if event.get("eventAction") in ("registration", "registered"):
+                    date_str = event.get("eventDate", "")
+                    if date_str:
+                        # Format: 2019-04-23T10:13:16Z → 2019-04-23
+                        return date_str[:10]
+    except Exception:
+        pass
+    return ""
+ 
+def get_domain_info(domain: str) -> tuple[str, str, str]:
+    """Zwraca (rejestrator, hosting, data_rejestracji) dla domeny."""
+    registrar     = get_registrar(domain)
+    hosting       = get_hosting(domain)
+    reg_date      = get_registration_date(domain)
+    return registrar, hosting, reg_date
  
  
  
@@ -385,33 +409,35 @@ async def scan_domain(session, domain, semaphore):
                 platform = detect_platform(html)
                 firm_kw  = detect_firm(html) if platform == "brak danych" else None
  
-                # Pobierz rejestratora i hosting TYLKO dla sklepów i firm
+                # Pobierz rejestratora, hosting i datę rejestracji TYLKO dla sklepów i firm
                 is_shop = platform != "brak danych"
                 is_firm = firm_kw is not None
                 if is_shop or is_firm:
-                    registrar, hosting = get_domain_info(domain)
+                    registrar, hosting, reg_date_whois = get_domain_info(domain)
                 else:
-                    registrar, hosting = "", ""
+                    registrar, hosting, reg_date_whois = "", "", ""
  
                 return {
-                    "domain":     domain,
-                    "title":      title,
-                    "platform":   platform,
-                    "url":        final_url or f"{scheme}://{domain}",
-                    "dziala":     "TAK",
-                    "firm_kw":    firm_kw,
-                    "registrar":  registrar,
-                    "hosting":    hosting,
+                    "domain":          domain,
+                    "title":           title,
+                    "platform":        platform,
+                    "url":             final_url or f"{scheme}://{domain}",
+                    "dziala":          "TAK",
+                    "firm_kw":         firm_kw,
+                    "registrar":       registrar,
+                    "hosting":         hosting,
+                    "reg_date_whois":  reg_date_whois,
                 }
     return {
-        "domain":     domain,
-        "title":      "",
-        "platform":   "brak danych",
-        "url":        "",
-        "dziala":     "NIE",
-        "firm_kw":    None,
-        "registrar":  "",
-        "hosting":    "",
+        "domain":         domain,
+        "title":          "",
+        "platform":       "brak danych",
+        "url":            "",
+        "dziala":         "NIE",
+        "firm_kw":        None,
+        "registrar":      "",
+        "hosting":        "",
+        "reg_date_whois": "",
     }
  
 async def scan_all(domains):
@@ -488,7 +514,7 @@ async def main():
     print(f"\n💾 Zapisuję do '{SHEET_QUEUE}'...")
     batch_append(ws_queue,
         [[today, r["domain"], r["title"], r["dziala"], r["url"],
-          r["platform"], r["registrar"], r["hosting"], "NIE", ""]
+          r["platform"], r["registrar"], r["hosting"], r["reg_date_whois"], "NIE", ""]
          for r in results],
         "[Kolejka]")
  
@@ -498,7 +524,7 @@ async def main():
         print(f"\n🛒 Zapisuję {len(shops_now)} sklepów do '{SHEET_NOW}'...")
         batch_append(ws_now,
             [[r["domain"], r["title"], r["platform"], r["url"],
-              r["registrar"], r["hosting"], today, today]
+              r["registrar"], r["hosting"], r["reg_date_whois"], today, today]
              for r in shops_now],
             "[Sklepy-od-razu]")
  
@@ -508,7 +534,7 @@ async def main():
         print(f"\n🏢 Zapisuję {len(firms_now)} firm do '{SHEET_FIRMS}'...")
         batch_append(ws_firms,
             [[r["domain"], r["title"], r["url"],
-              r["registrar"], r["hosting"], today, today, r["firm_kw"]]
+              r["registrar"], r["hosting"], r["reg_date_whois"], today, today, r["firm_kw"]]
              for r in firms_now],
             "[Nowe-firmy]")
  

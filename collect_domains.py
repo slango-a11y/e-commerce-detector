@@ -27,7 +27,6 @@ SOURCES = [
     "https://raw.githubusercontent.com/whoisextractor/newly-registered-domains/main/nrd-1d.txt",
     "https://raw.githubusercontent.com/cenk/nrd/main/nrd-last-10-days.txt",
     # shreshta-labs — prawdziwe NRD (tygodniowe i miesięczne)
-    "https://raw.githubusercontent.com/shreshta-labs/newly-registered-domains/main/nrd-1w.csv",
 ]
  
 SCOPES = [

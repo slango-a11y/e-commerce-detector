@@ -28,7 +28,12 @@ HEADER_SHOPS = ["domena", "title", "platforma", "url", "data_rejestracji", "data
  
 PLATFORMS = {
     "WooCommerce": [
-        "wp-content/plugins/woocommerce", "woocommerce", "wc-ajax",
+        "wp-content/plugins/woocommerce",
+        "woocommerce-cart",
+        "woocommerce-checkout",
+        "add-to-cart",
+        "wc-ajax=get_refreshed_fragments",
+        "woocommerce-product",
     ],
     "Shopify": [
         "cdn.shopify.com", "Shopify.theme", "shopify-section", "/cdn/shop/",

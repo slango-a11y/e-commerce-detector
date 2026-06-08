@@ -612,8 +612,9 @@ def get_domains_to_scan(ws) -> list[dict]:
 
 def mark_as_scanned(ws, row_numbers: list[int]):
     today = datetime.date.today().isoformat()
-    updates = [{"range": f"G{r}:G{r}", "values": [["TAK"]]} for r in row_numbers]
-    updates += [{"range": f"H{r}:H{r}", "values": [[today]]} for r in row_numbers]
+    # J = zeskanowano (kol. 10), K = data_skanu (kol. 11) — zgodnie z arkuszem
+    updates = [{"range": f"J{r}:J{r}", "values": [["TAK"]]} for r in row_numbers]
+    updates += [{"range": f"K{r}:K{r}", "values": [[today]]} for r in row_numbers]
     if updates:
         try:
             ws.batch_update(updates)

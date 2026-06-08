@@ -2,7 +2,7 @@
 scan_from_queue.py v3
 ─────────────────────────────────────────────────────────────────
 Codziennie pobiera z "Kolejka" domeny sprzed 13-16 dni,
-skanuje je i wyniki wrzuca do "Sklepy - po 30 dniach".
+skanuje je i wyniki wrzuca do "Sklepy - po 14 dniach".
 
 v3 nowości:
   • Scoring sygnatur (strong=5 / medium=3 / weak=1) — koniec binarnej detekcji
@@ -41,7 +41,7 @@ SCOPES = [
 ]
 
 SHEET_QUEUE  = "Kolejka"
-SHEET_LATER  = "Sklepy - po 30 dniach"
+SHEET_LATER  = "Sklepy - po 14 dniach"
 HEADER_SHOPS = [
     "domena", "title", "platforma", "pewnosc", "score",
     "url", "data_rejestracji", "data_skanu",
@@ -628,9 +628,26 @@ def save_results(spreadsheet, results: list[dict]):
         ws = spreadsheet.add_worksheet(title=SHEET_LATER, rows=500000, cols=len(HEADER_SHOPS))
         ws.append_row(HEADER_SHOPS)
 
+    # Pobierz istniejące domeny żeby nie duplikować
+    existing = set()
+    try:
+        all_vals = ws.get_all_values()
+        for row in all_vals[1:]:
+            if row and row[0]:
+                existing.add(row[0].strip().lower())
+        print(f"  Już w '{SHEET_LATER}': {len(existing)} domen (deduplikacja)")
+    except Exception as e:
+        print(f"  ⚠️  Nie mogę pobrać istniejących: {e}")
+
     today = datetime.date.today().isoformat()
     rows = []
+    skipped = 0
     for r in results:
+        domain = r["domain"].lower().strip()
+        if domain in existing:
+            skipped += 1
+            continue
+        existing.add(domain)
         seo = r.get("seo", {})
         rows.append([
             r["domain"],
@@ -649,6 +666,9 @@ def save_results(spreadsheet, results: list[dict]):
             " | ".join(seo.get("issues", [])),
         ])
 
+    if skipped:
+        print(f"  ⏭️  Pominięto duplikatów: {skipped}")
+
     for i in range(0, len(rows), BATCH_SIZE):
         batch = rows[i:i + BATCH_SIZE]
         try:
@@ -660,7 +680,7 @@ def save_results(spreadsheet, results: list[dict]):
         if i + BATCH_SIZE < len(rows):
             time.sleep(BATCH_PAUSE)
 
-    print(f"\n✅ Wyniki zapisane do '{SHEET_LATER}'")
+    print(f"\n✅ Wyniki zapisane do '{SHEET_LATER}' ({len(rows)} nowych)")
 
 # ── DNS / CNAME HINTS ─────────────────────────────────────────
 
@@ -970,7 +990,7 @@ async def main():
 
     if results:
         save_results(sh, results)
-        print(f"\n🎉 Znaleziono {len(results)} sklepów po 30 dniach!")
+        print(f"\n🎉 Znaleziono {len(results)} sklepów po 14 dniach!")
     else:
         print("\n📭 Brak nowych sklepów w tej partii.")
 

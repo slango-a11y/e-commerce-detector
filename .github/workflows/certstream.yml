@@ -1,0 +1,29 @@
+name: "1a. CertStream — live SSL monitoring"
+
+on:
+  schedule:
+    - cron: '0 5 * * *'    # 7:00 czasu polskiego
+    - cron: '0 14 * * *'   # 16:00 czasu polskiego
+  workflow_dispatch:
+
+jobs:
+  certstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instaluj zależności
+        run: pip install certstream tldextract gspread google-auth requests
+
+      - name: Uruchom CertStream (55 min)
+        run: python collect_certstream.py
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+          CERTSTREAM_RUNTIME: "3300"

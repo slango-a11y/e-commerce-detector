@@ -1,123 +1,604 @@
 """
-scan_from_queue.py v2
-─────────────────────
-Codziennie pobiera z "Kolejka" domeny sprzed 28-35 dni,
-skanuje je ponownie i wyniki wrzuca do "Sklepy - po 30 dniach".
+scan_from_queue.py v3
+─────────────────────────────────────────────────────────────────
+Codziennie pobiera z "Kolejka" domeny sprzed 13-16 dni,
+skanuje je i wyniki wrzuca do "Sklepy - po 30 dniach".
+
+v3 nowości:
+  • Scoring sygnatur (strong=5 / medium=3 / weak=1) — koniec binarnej detekcji
+  • Próg pewności: ≥8 pkt = sklep, 5-7 = manual_review (pomijane), <5 = brak
+  • Sprawdza home + robots.txt + podstrony prawne (polityka, regulamin, koszyk)
+  • DNS/CNAME hint dla Shopera (shoparena.pl, dcsaas.tech) i Sky-Shopa (mysky-shop.pl)
+  • Mini-audyt SEO: title, meta description, H1, canonical, noindex, sitemap
+  • Nowe platformy: Squarespace, BigCommerce, Ecwid, Shopware, Sylius, Weebly,
+    Jimdo, Zyro/Hostinger, Turbo-Shop, eShop, IAI Shop, ePages, Gran Shop,
+    Miva, nopCommerce, Zen Cart, CubeCart, CS-Cart, X-Cart, Gambio
+  • Kolumny wynikowe rozszerzone o pewność, score, SEO issues
 """
- 
-import os, re, json, asyncio, datetime, time
+
+import os, re, json, asyncio, datetime, time, socket
 import gspread, aiohttp
 from google.oauth2.service_account import Credentials
- 
+
+# ── KONFIGURACJA ─────────────────────────────────────────────
+
 SCAN_WINDOW_MIN = 13
 SCAN_WINDOW_MAX = 16
-CONCURRENT  = 50
-TIMEOUT     = 10
-MAX_BYTES   = 150_000
-BATCH_SIZE  = 200
-BATCH_PAUSE = 3
- 
+CONCURRENT      = 40          # zmniejszone bo teraz pobieramy więcej podstron
+TIMEOUT         = 12
+MAX_BYTES       = 200_000     # więcej bo skanujemy też robots.txt itd.
+BATCH_SIZE      = 200
+BATCH_PAUSE     = 3
+
+SCORE_HIGH      = 8           # ≥8 → pewna detekcja
+SCORE_MEDIUM    = 5           # 5-7 → manual_review (pomijamy zapis, ale logujemy)
+
+WEIGHTS = {"strong": 5, "medium": 3, "weak": 1}
+
 SCOPES = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
 ]
- 
+
 SHEET_QUEUE  = "Kolejka"
 SHEET_LATER  = "Sklepy - po 30 dniach"
-HEADER_SHOPS = ["domena", "title", "platforma", "url", "data_rejestracji", "data_skanu"]
- 
+HEADER_SHOPS = [
+    "domena", "title", "platforma", "pewnosc", "score",
+    "url", "data_rejestracji", "data_skanu",
+    "seo_title_ok", "seo_desc_ok", "seo_h1_ok",
+    "seo_canonical", "seo_noindex", "seo_issues",
+]
+
+# ── SYGNATURY PLATFORM ────────────────────────────────────────
+#
+# Każda platforma ma strong / medium / weak.
+# strong = bardzo charakterystyczne ślady (5 pkt)
+# medium = dobre wskazówki (3 pkt)
+# weak   = ogólne, łatwe do fałszywego trafienia (1 pkt)
+#
+# Próg do oznaczenia jako sklep tej platformy: SCORE_HIGH (8 pkt)
+# Jeśli kilka platform ma ≥5 pkt, wygrywa najwyższy score.
+
 PLATFORMS = {
-    "WooCommerce": [
-        "wp-content/plugins/woocommerce",
-        "woocommerce-cart",
-        "woocommerce-checkout",
-        "add-to-cart",
-        "wc-ajax=get_refreshed_fragments",
-        "woocommerce-product",
-    ],
-    "Shopify": [
-        "cdn.shopify.com", "Shopify.theme", "shopify-section", "/cdn/shop/",
-    ],
-    "PrestaShop": [
-        "var prestashop =", "/modules/ps_", "id_product_attribute",
-    ],
-    "Magento": [
-        "var BLANK_URL", "Mage.Cookies", "mage/cookies", "Magento_Ui",
-    ],
-    "IdoSell": [
-        "iai-shop.com", "idosell.com", "iaisystem", "cdn.idosell.com",
-    ],
-    "Shoper": [
-        "shoper.pl", "sklep-shoper.pl", "cdn.shoper.pl", "shoperstatic.com",
-    ],
-    "SkyShop": [
-        "sky-shop.pl",
-        "Sklep internetowy na oprogramowaniu Sky-Shop",
-        "skyshopapp.com",
-        "/sklep/userdata/",
-        "skyshop",
-    ],
-    "AtomStore": [
-        "atomstore.pl", "atomstore", "powered by: atomstore",
-        "powered by atomstore", "utm_source=client_shop",
-    ],
-    "SOTE": [
-        "sote.pl", "sote-shop", "soteshop",
-    ],
-    "ShopGold": [
-        "shopgold.pl", "shopgold-",
-    ],
-    "osCommerce": [
-        "oscommerce", "catalog/includes/",
-    ],
-    "Comarch e-Sklep": [
-        "e-sklep.pl", "comarch.com/e-sklep", "comarchesklep",
-    ],
-    "RedCart": [
-        "redcart.pl", "rc-cdn.redcart", "redcart_",
-    ],
-    "OpenCart": [
-        "catalog/view/theme", "route=common/home", "index.php?route=",
-        "opencart",
-    ],
-    "BaseLinker": [
-        "baselinker.com",
-    ],
-    "Selly": [
-        "selly.pl", "selly-cdn", "selly_",
-    ],
-    "Selesto": [
-        "selesto.pl", "cdn.selesto.pl", "selesto-",
-    ],
-    "TakeDrop": [
-        "takedrop.pl", "takebuilder", "taketrust", "takedrop",
-    ],
-    "2ClickShop": [
-        "2clickshop", "2click.pl",
-    ],
-    "Wix eCommerce": [
-        "wixstatic.com", "wix.com",
-    ],
-    "Własny sklep": [
-        "dodaj do koszyka", "add to cart", "kup teraz", "koszyk",
-        "id=\"cart\"", "class=\"cart\"", "class=\"basket\"",
-        "/cart", "checkout",
-    ],
+
+    # ── POLSKIE / GŁÓWNE ─────────────────────────────────────
+
+    "Shoper": {
+        "strong": [
+            r"\bShop5\b",
+            r"\bShoper5_lp-[a-z]{2}_[A-Z]{2}\b",
+            r"Sklep internetowy Shoper\.pl",
+            r"shoparena\.pl",
+            r"\.cf\.dcsaas\.tech\b",
+            r"/admin/auth/login",
+            r"shoperstatic\.com",
+            r"cdn\.shoper\.pl",
+        ],
+        "medium": [
+            r"\bcookie_read\b",
+            r"\bbasket\b",
+            r"Shoper\s+S\.A\.",
+            r"developers\.shoper\.pl",
+            r"shop_utm_source",
+            r"sklep-shoper\.pl",
+            r"shoper\.pl",
+        ],
+        "weak": [
+            r"\bShoper\b",
+            r"\bAurora\b",
+            r"Shoper Premium",
+        ],
+    },
+
+    "SkyShop": {
+        "strong": [
+            r"\bmysky-shop\.pl\b",
+            r"\bwebapi\.mysky-shop\.pl\b",
+            r"\bscart\b",
+            r"\bSky-Shop\.pl\b",
+            r"sky-shop\.pl",
+            r"Sklep internetowy na oprogramowaniu Sky-Shop",
+            r"/sklep/userdata/",
+        ],
+        "medium": [
+            r"\bcc_cookie\b",
+            r"\bco_accept\b",
+            r"\bwin_popup\b",
+            r"\bskin_tpl\b",
+            r"\bcolor_preview\b",
+            r"\bSkyShop\b",
+            r"\bSky-Shop\b",
+        ],
+        "weak": [
+            r"\bSERVERID\b",
+            r"skyshopapp\.com",
+            r"\bskyshop\b",
+        ],
+    },
+
+    "PrestaShop": {
+        "strong": [
+            r"var\s+prestashop\s*=",
+            r"window\.prestashop",
+            r"powered by PrestaShop",
+            r"automatically generated by PrestaShop",
+            r"\bPrestaShop-[a-f0-9]{32}\b",
+        ],
+        "medium": [
+            r"\bprestashop\b",
+            r"/modules/ps_[a-zA-Z0-9_-]+/",
+            r"/themes/[a-zA-Z0-9_-]+/",
+            r"/img/p/",
+            r"/img/cms/",
+            r"/js/jquery/plugins/",
+            r"id_product=",
+            r"controller=product",
+            r"controller=cart",
+            r"index\.php\?controller=",
+        ],
+        "weak": [
+            r"prestashop\.com",
+            r"addons\.prestashop\.com",
+            r"/api/",
+            r"/webservice/",
+            r"/modules/[a-zA-Z0-9_-]+/",
+        ],
+    },
+
+    "IdoSell": {
+        "strong": [
+            r"iai-shop\.com",
+            r"idosell\.com",
+            r"cdn\.idosell\.com",
+            r"iaisystem",
+            r"iai\.pl",
+        ],
+        "medium": [
+            r"idosell",
+            r"shoper-1\.com",      # stara infrastruktura IAI
+        ],
+        "weak": [],
+    },
+
+    "AtomStore": {
+        "strong": [
+            r"atomstore\.pl",
+            r"powered by[:\s]+atomstore",
+            r"utm_source=client_shop",
+        ],
+        "medium": [
+            r"\batomstore\b",
+        ],
+        "weak": [],
+    },
+
+    "SOTE": {
+        "strong": [
+            r"sote\.pl",
+            r"soteshop",
+        ],
+        "medium": [
+            r"sote-shop",
+        ],
+        "weak": [],
+    },
+
+    "RedCart": {
+        "strong": [
+            r"rc-cdn\.redcart",
+            r"redcart\.pl",
+        ],
+        "medium": [
+            r"redcart_",
+        ],
+        "weak": [],
+    },
+
+    "Selesto": {
+        "strong": [
+            r"cdn\.selesto\.pl",
+            r"selesto\.pl",
+        ],
+        "medium": [
+            r"selesto-",
+        ],
+        "weak": [],
+    },
+
+    "TakeDrop": {
+        "strong": [
+            r"takedrop\.pl",
+            r"takebuilder",
+            r"taketrust",
+        ],
+        "medium": [
+            r"takedrop",
+        ],
+        "weak": [],
+    },
+
+    "Selly": {
+        "strong": [
+            r"cdn\.selly\.pl",
+            r"selly\.pl",
+        ],
+        "medium": [
+            r"selly-cdn",
+            r"selly_",
+        ],
+        "weak": [],
+    },
+
+    "ShopGold": {
+        "strong": [
+            r"shopgold\.pl",
+        ],
+        "medium": [
+            r"shopgold-",
+        ],
+        "weak": [],
+    },
+
+    "Turbo-Shop": {
+        "strong": [
+            r"turbo-shop\.pl",
+            r"turboshop\.pl",
+        ],
+        "medium": [
+            r"turbo.shop",
+        ],
+        "weak": [],
+    },
+
+    "Gran Shop": {
+        "strong": [
+            r"granshop\.pl",
+            r"gran-shop\.pl",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    "2ClickShop": {
+        "strong": [
+            r"2clickshop\.pl",
+            r"2click\.pl",
+        ],
+        "medium": [
+            r"2clickshop",
+        ],
+        "weak": [],
+    },
+
+    "BaseLinker": {
+        "strong": [
+            r"baselinker\.com",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    # ── GLOBALNE ─────────────────────────────────────────────
+
+    "WooCommerce": {
+        "strong": [
+            r"wp-content/plugins/woocommerce",
+            r"woocommerce-cart",
+            r"woocommerce-checkout",
+            r"wc-ajax=get_refreshed_fragments",
+            r"woocommerce-product",
+        ],
+        "medium": [
+            r"add-to-cart=",
+            r"woocommerce",
+            r"wc_cart_hash",
+        ],
+        "weak": [],
+    },
+
+    "Shopify": {
+        "strong": [
+            r"cdn\.shopify\.com",
+            r"Shopify\.theme",
+            r"/cdn/shop/",
+            r"shopify-section",
+            r"window\.Shopify\s*=",
+        ],
+        "medium": [
+            r"myshopify\.com",
+            r"shopify\.com/s/files",
+        ],
+        "weak": [],
+    },
+
+    "Magento": {
+        "strong": [
+            r"Mage\.Cookies",
+            r"Magento_Ui",
+            r"mage/cookies",
+            r"requirejs.*Magento",
+        ],
+        "medium": [
+            r"var BLANK_URL",
+            r"mage\.js",
+            r"magento",
+        ],
+        "weak": [],
+    },
+
+    "BigCommerce": {
+        "strong": [
+            r"cdn\d*\.bigcommerce\.com",
+            r"bigcommerce\.com/s/",
+            r"window\.BCData",
+            r"BigCommerce\.theme",
+        ],
+        "medium": [
+            r"bigcommerce",
+        ],
+        "weak": [],
+    },
+
+    "Shopware": {
+        "strong": [
+            r"shopware\.com",
+            r"/bundles/shopware",
+            r"sw-plugin",
+            r"shopware-storefront",
+        ],
+        "medium": [
+            r"shopware",
+            r"/widgets/index/",
+        ],
+        "weak": [],
+    },
+
+    "Sylius": {
+        "strong": [
+            r"sylius\.com",
+            r"/sylius/",
+            r"sylius-product",
+        ],
+        "medium": [
+            r"sylius",
+        ],
+        "weak": [],
+    },
+
+    "OpenCart": {
+        "strong": [
+            r"catalog/view/theme",
+            r"route=common/home",
+            r"index\.php\?route=",
+        ],
+        "medium": [
+            r"opencart",
+        ],
+        "weak": [],
+    },
+
+    "osCommerce": {
+        "strong": [
+            r"catalog/includes/",
+            r"osCommerce Online Merchant",
+        ],
+        "medium": [
+            r"oscommerce",
+        ],
+        "weak": [],
+    },
+
+    "Comarch e-Sklep": {
+        "strong": [
+            r"e-sklep\.pl",
+            r"comarch\.com/e-sklep",
+            r"comarchesklep",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    "Ecwid": {
+        "strong": [
+            r"app\.ecwid\.com",
+            r"ecwid\.com/script\.js",
+            r"window\.ecwid_script_defer",
+            r"Ecwid\.init",
+        ],
+        "medium": [
+            r"ecwid",
+        ],
+        "weak": [],
+    },
+
+    "CS-Cart": {
+        "strong": [
+            r"cs-cart\.com",
+            r"/var/skins/",
+            r"fn_cscart",
+            r"Tygh\.",
+        ],
+        "medium": [
+            r"cscart",
+            r"cs-cart",
+        ],
+        "weak": [],
+    },
+
+    "X-Cart": {
+        "strong": [
+            r"x-cart\.com",
+            r"XCTheme",
+            r"xcart",
+        ],
+        "medium": [
+            r"x-cart",
+        ],
+        "weak": [],
+    },
+
+    "nopCommerce": {
+        "strong": [
+            r"nopcommerce",
+            r"/Plugins/.*nopCommerce",
+            r"nop\.ajax",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    "Zen Cart": {
+        "strong": [
+            r"zen-cart\.com",
+            r"zencart",
+            r"index\.php\?main_page=",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    "CubeCart": {
+        "strong": [
+            r"cubecart\.com",
+            r"cubecart",
+            r"/modules/cubecart/",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    "Gambio": {
+        "strong": [
+            r"gambio\.de",
+            r"gambio",
+            r"GXModules",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    "ePages": {
+        "strong": [
+            r"epages\.com",
+            r"ePages",
+            r"/rs/",
+        ],
+        "medium": [],
+        "weak": [],
+    },
+
+    "Squarespace": {
+        "strong": [
+            r"squarespace\.com",
+            r"static\.squarespace\.com",
+            r"window\.SQUARESPACE_LOGIN_PAGE",
+            r"squarespace-cdn\.com",
+        ],
+        "medium": [
+            r"squarespace",
+        ],
+        "weak": [],
+    },
+
+    "Wix eCommerce": {
+        "strong": [
+            r"static\.wixstatic\.com",
+            r"wix\.com",
+            r"wixsite\.com",
+        ],
+        "medium": [
+            r"wixstatic\.com",
+        ],
+        "weak": [],
+    },
+
+    "Weebly": {
+        "strong": [
+            r"weebly\.com",
+            r"editmysite\.com",
+            r"weeblycloud\.com",
+        ],
+        "medium": [
+            r"weebly",
+        ],
+        "weak": [],
+    },
+
+    "Jimdo": {
+        "strong": [
+            r"jimdostatic\.com",
+            r"jimdo\.com",
+            r"jimdosite\.com",
+        ],
+        "medium": [
+            r"jimdo",
+        ],
+        "weak": [],
+    },
+
+    "Zyro / Hostinger": {
+        "strong": [
+            r"zyrosite\.com",
+            r"hostingersite\.com",
+            r"zyro\.com",
+        ],
+        "medium": [
+            r"zyro",
+        ],
+        "weak": [],
+    },
+
+    # ── FALLBACK — własny sklep ───────────────────────────────
+    # Używamy tylko jeśli żadna inna platforma nie osiągnęła progu.
+    # Niski scoring celowo — żeby nie fałszować wyników.
+    "Własny sklep": {
+        "strong": [],
+        "medium": [
+            r"dodaj do koszyka",
+            r"add to cart",
+            r"kup teraz",
+            r'id=["\']cart["\']',
+        ],
+        "weak": [
+            r"\bkoszyk\b",
+            r'class=["\']cart["\']',
+            r'class=["\']basket["\']',
+            r"/cart",
+            r"\bcheckout\b",
+        ],
+    },
 }
- 
+
+# ── NEGATYWNE WZORCE (parkingi, strony puste) ────────────────
+
+NEGATIVE_PATTERNS = [
+    r"domain is parked",
+    r"parking domeny",
+    r"ta domena jest zaparkowana",
+    r"strona w budowie",
+    r"coming soon",
+    r"this domain is for sale",
+    r"apache2 default page",
+    r"nginx default page",
+    r"default web page",
+    r"welcome to plesk",
+    r"welcome to cpanel",
+    r"domain not configured",
+]
+
 # ── SHEETS ────────────────────────────────────────────────────
- 
+
 def get_sheets_client():
     creds = Credentials.from_service_account_info(
         json.loads(os.environ["GOOGLE_CREDENTIALS"]), scopes=SCOPES)
     return gspread.authorize(creds)
- 
+
 def get_domains_to_scan(ws) -> list[dict]:
     today = datetime.date.today()
     scan_dates = set()
     for d in range(SCAN_WINDOW_MIN, SCAN_WINDOW_MAX + 1):
         scan_dates.add((today - datetime.timedelta(days=d)).isoformat())
- 
+
     print(f"  Szukam domen z dat: {sorted(scan_dates)}")
     all_rows = ws.get_all_records()
     to_scan = []
@@ -128,29 +609,45 @@ def get_domains_to_scan(ws) -> list[dict]:
         if reg_date in scan_dates and scanned == "NIE" and domain:
             to_scan.append({"row": i, "domain": domain, "reg_date": reg_date})
     return to_scan
- 
+
 def mark_as_scanned(ws, row_numbers: list[int]):
     today = datetime.date.today().isoformat()
     updates = [{"range": f"G{r}:G{r}", "values": [["TAK"]]} for r in row_numbers]
-    # kolumna G = zeskanowano (7), H = data_skanu (8) — nowy układ z v4
     updates += [{"range": f"H{r}:H{r}", "values": [[today]]} for r in row_numbers]
     if updates:
         try:
             ws.batch_update(updates)
         except Exception as e:
             print(f"  ⚠️  Błąd oznaczania: {e}")
- 
+
 def save_results(spreadsheet, results: list[dict]):
     try:
         ws = spreadsheet.worksheet(SHEET_LATER)
     except gspread.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet(title=SHEET_LATER, rows=500000, cols=6)
+        ws = spreadsheet.add_worksheet(title=SHEET_LATER, rows=500000, cols=len(HEADER_SHOPS))
         ws.append_row(HEADER_SHOPS)
- 
+
     today = datetime.date.today().isoformat()
-    rows = [[r["domain"], r["title"], r["platform"], r["url"], r["reg_date"], today]
-            for r in results]
- 
+    rows = []
+    for r in results:
+        seo = r.get("seo", {})
+        rows.append([
+            r["domain"],
+            r["title"],
+            r["platform"],
+            r["confidence"],
+            r["score"],
+            r["url"],
+            r["reg_date"],
+            today,
+            "TAK" if seo.get("title_ok") else "NIE",
+            "TAK" if seo.get("desc_ok") else "NIE",
+            "TAK" if seo.get("h1_ok") else "NIE",
+            "TAK" if seo.get("has_canonical") else "NIE",
+            "TAK" if seo.get("has_noindex") else "NIE",
+            " | ".join(seo.get("issues", [])),
+        ])
+
     for i in range(0, len(rows), BATCH_SIZE):
         batch = rows[i:i + BATCH_SIZE]
         try:
@@ -161,123 +658,334 @@ def save_results(spreadsheet, results: list[dict]):
                 ws.append_rows(batch, value_input_option="RAW")
         if i + BATCH_SIZE < len(rows):
             time.sleep(BATCH_PAUSE)
- 
+
     print(f"\n✅ Wyniki zapisane do '{SHEET_LATER}'")
- 
-# ── SKANOWANIE ────────────────────────────────────────────────
- 
+
+# ── DNS / CNAME HINTS ─────────────────────────────────────────
+
+def dns_platform_hints(domain: str) -> list[tuple[str, int]]:
+    """
+    Sprawdza CNAME chain domeny i zwraca dodatkowe punkty scoringowe
+    dla Shopera i Sky-Shopa. Używa wbudowanego socket — bez dnspython.
+    """
+    hints = []
+    try:
+        # socket.getaddrinfo nie daje CNAME, więc robimy proste resolving
+        # i szukamy wzorców w hostname po getfqdn
+        fqdn = socket.getfqdn(domain).lower()
+        if "shoparena.pl" in fqdn or "dcsaas.tech" in fqdn:
+            hints.append(("Shoper", 5))
+        if "mysky-shop.pl" in fqdn or "sky-shop.pl" in fqdn:
+            hints.append(("SkyShop", 5))
+    except Exception:
+        pass
+    return hints
+
+# ── WYKRYWANIE PLATFORM — SCORING ────────────────────────────
+
+def is_parked(html: str) -> bool:
+    hl = html.lower()
+    return any(re.search(p, hl) for p in NEGATIVE_PATTERNS)
+
+def score_text(text: str, platform: str) -> tuple[int, list[str]]:
+    """Zwraca (score, lista_dopasowanych_wzorców)."""
+    score = 0
+    evidence = []
+    sigs = PLATFORMS[platform]
+    for strength, patterns in sigs.items():
+        weight = WEIGHTS[strength]
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE | re.DOTALL):
+                score += weight
+                evidence.append(f"{strength}:{pattern}")
+    return score, evidence
+
+def detect_platform_scored(
+    combined_text: str,
+    dns_hints: list[tuple[str, int]],
+) -> dict:
+    """
+    Liczy score dla każdej platformy, uwzględnia DNS hints,
+    zwraca najlepszą platformę lub None jeśli poniżej progu.
+    """
+    scores = {}
+    for platform in PLATFORMS:
+        s, ev = score_text(combined_text, platform)
+        scores[platform] = s
+
+    # Dodaj DNS hints
+    for platform, bonus in dns_hints:
+        if platform in scores:
+            scores[platform] += bonus
+
+    best = max(scores, key=lambda p: scores[p])
+    best_score = scores[best]
+
+    # "Własny sklep" jako fallback — nie może wygrać jeśli inna platforma też osiągnęła ≥5
+    if best == "Własny sklep":
+        # Sprawdź czy jakaś konkretna platforma ma choć 5
+        other_max = max(
+            (s for p, s in scores.items() if p != "Własny sklep"),
+            default=0
+        )
+        if other_max >= 5:
+            best = max(
+                (p for p in scores if p != "Własny sklep"),
+                key=lambda p: scores[p]
+            )
+            best_score = scores[best]
+
+    if best_score >= SCORE_HIGH:
+        confidence = "high"
+    elif best_score >= SCORE_MEDIUM:
+        confidence = "manual_review"
+    else:
+        return {"platform": None, "confidence": "low", "score": best_score}
+
+    return {
+        "platform":   best,
+        "confidence": confidence,
+        "score":      best_score,
+    }
+
+# ── MINI-AUDYT SEO ────────────────────────────────────────────
+
+def seo_audit(html: str) -> dict:
+    title_m     = re.search(r"<title[^>]*>([^<]{1,300})</title>", html, re.IGNORECASE)
+    desc_m      = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{1,500})["\']', html, re.IGNORECASE)
+    h1_m        = re.search(r"<h1[^>]*>(.{1,200}?)</h1>", html, re.IGNORECASE | re.DOTALL)
+    canonical_m = re.search(r'<link[^>]+rel=["\']canonical["\']', html, re.IGNORECASE)
+    noindex     = bool(re.search(r'<meta[^>]+content=["\'][^"\']*noindex', html, re.IGNORECASE))
+
+    title    = re.sub(r"<[^>]+>", "", title_m.group(1)).strip() if title_m else ""
+    desc     = desc_m.group(1).strip() if desc_m else ""
+    h1       = re.sub(r"<[^>]+>", "", h1_m.group(1)).strip() if h1_m else ""
+
+    title_ok = bool(title) and 20 <= len(title) <= 70
+    desc_ok  = bool(desc)  and 50 <= len(desc) <= 160
+    h1_ok    = bool(h1)
+
+    issues = []
+    if not title:
+        issues.append("brak title")
+    elif len(title) < 20:
+        issues.append(f"title za krótki ({len(title)} zn.)")
+    elif len(title) > 70:
+        issues.append(f"title za długi ({len(title)} zn.)")
+
+    if not desc:
+        issues.append("brak meta description")
+    elif len(desc) < 50:
+        issues.append("meta description za krótka")
+    elif len(desc) > 160:
+        issues.append("meta description za długa")
+
+    if not h1:
+        issues.append("brak H1")
+
+    if noindex:
+        issues.append("strona ma noindex!")
+
+    if not canonical_m:
+        issues.append("brak canonicala")
+
+    return {
+        "title_ok":      title_ok,
+        "desc_ok":       desc_ok,
+        "h1_ok":         h1_ok,
+        "has_canonical": bool(canonical_m),
+        "has_noindex":   noindex,
+        "issues":        issues,
+    }
+
+# ── HELPERS ───────────────────────────────────────────────────
+
 def extract_title(html: str) -> str:
     m = re.search(r"<title[^>]*>([^<]{1,200})</title>", html, re.IGNORECASE)
     if m:
         return re.sub(r"\s+", " ", m.group(1).strip())[:150]
     return ""
- 
-def detect_platform(html: str):
-    hl = html.lower()
-    for platform, sigs in PLATFORMS.items():
-        for sig in sigs:
-            if sig.lower() in hl:
-                return platform
-    return None
- 
-async def fetch_page(session, url):
+
+SUBPAGES = [
+    "/robots.txt",
+    "/sitemap.xml",
+    "/pl/i/Polityka-prywatnosci",
+    "/pl/i/Regulamin",
+    "/polityka-prywatnosci",
+    "/regulamin",
+    "/privacy-policy",
+    "/koszyk",
+    "/cart",
+]
+
+# ── SKANOWANIE ASYNC ─────────────────────────────────────────
+
+async def fetch_page(session, url: str) -> bytes | None:
     try:
         async with session.get(
             url,
             timeout=aiohttp.ClientTimeout(total=TIMEOUT),
             allow_redirects=True, max_redirects=5, ssl=False,
         ) as resp:
-            if 200 <= resp.status < 300:
+            if 200 <= resp.status < 500:
                 return await resp.content.read(MAX_BYTES)
     except Exception:
         pass
     return None
- 
-async def check_domain(session, item, semaphore):
+
+async def check_domain(session, item: dict, semaphore: asyncio.Semaphore) -> dict | None:
     async with semaphore:
+        base_url = None
+        home_html = None
+
+        # Próbuj https → http
         for scheme in ("https", "http"):
             raw = await fetch_page(session, f"{scheme}://{item['domain']}")
             if raw:
-                html     = raw.decode("utf-8", errors="ignore")
-                platform = detect_platform(html)
-                if platform:
-                    return {
-                        "domain":   item["domain"],
-                        "title":    extract_title(html),
-                        "platform": platform,
-                        "url":      f"{scheme}://{item['domain']}",
-                        "reg_date": item["reg_date"],
-                        "row":      item["row"],
-                    }
-                return None
-    return None
- 
-async def scan_domains(items):
-    results = []
+                home_html = raw.decode("utf-8", errors="ignore")
+                base_url  = f"{scheme}://{item['domain']}"
+                break
+
+        if not home_html:
+            return None
+
+        if is_parked(home_html):
+            return None
+
+        # Zbierz podstrony
+        combined_parts = [home_html]
+        subpage_tasks  = [
+            fetch_page(session, base_url + sp)
+            for sp in SUBPAGES
+        ]
+        subpage_results = await asyncio.gather(*subpage_tasks, return_exceptions=True)
+        for raw in subpage_results:
+            if isinstance(raw, bytes):
+                combined_parts.append(raw.decode("utf-8", errors="ignore"))
+
+        combined = "\n".join(combined_parts)
+
+        # DNS hints (szybkie — nie blokuje async bo socket.getfqdn jest synchroniczny)
+        dns_hints = await asyncio.get_event_loop().run_in_executor(
+            None, dns_platform_hints, item["domain"]
+        )
+
+        # Scoring
+        detection = detect_platform_scored(combined, dns_hints)
+
+        if not detection["platform"]:
+            return None
+
+        # Dla manual_review logujemy ale nie zapisujemy do arkusza
+        if detection["confidence"] == "manual_review":
+            print(
+                f"  🟡 [manual] {item['domain']} → {detection['platform']} "
+                f"(score={detection['score']})"
+            )
+            return None
+
+        # SEO audit na home page
+        seo = seo_audit(home_html)
+
+        return {
+            "domain":     item["domain"],
+            "title":      extract_title(home_html),
+            "platform":   detection["platform"],
+            "confidence": detection["confidence"],
+            "score":      detection["score"],
+            "url":        base_url,
+            "reg_date":   item["reg_date"],
+            "row":        item["row"],
+            "seo":        seo,
+        }
+
+async def scan_domains(items: list[dict]) -> list[dict]:
+    results  = []
     semaphore = asyncio.Semaphore(CONCURRENT)
     connector = aiohttp.TCPConnector(limit=CONCURRENT, ssl=False)
-    headers   = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers   = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+    }
     done = shops = 0
- 
-    print(f"\n🔍 Skanuję {len(items)} domen (runda 2 — po 30 dniach)...")
+
+    print(f"\n🔍 Skanuję {len(items)} domen (v3 — scoring, podstrony, DNS hints)...")
     async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
         tasks = [check_domain(session, item, semaphore) for item in items]
         for coro in asyncio.as_completed(tasks):
             result = await coro
-            done += 1
+            done  += 1
             if result:
                 results.append(result)
                 shops += 1
-                print(f"  🛒 [{result['reg_date']}] {result['domain']} → {result['platform']}")
+                seo_issues = " | ".join(result["seo"]["issues"]) or "OK"
+                print(
+                    f"  🛒 [{result['reg_date']}] {result['domain']} "
+                    f"→ {result['platform']} "
+                    f"(score={result['score']}) | SEO: {seo_issues}"
+                )
             if done % 100 == 0:
                 print(f"  ... {done}/{len(items)} | sklepy: {shops}")
     return results
- 
+
 # ── GŁÓWNA FUNKCJA ────────────────────────────────────────────
- 
+
 async def main():
     today = datetime.date.today().isoformat()
-    print("=" * 55)
-    print("  SKAN PO 30 DNIACH")
+    print("=" * 60)
+    print("  SKAN PO 30 DNIACH — v3 (scoring + nowe platformy + SEO)")
     print(f"  Dziś: {today} | okno: {SCAN_WINDOW_MIN}-{SCAN_WINDOW_MAX} dni temu")
-    print("=" * 55)
- 
+    print("=" * 60)
+
     print("\n🔗 Łączę z Google Sheets...")
     gc = get_sheets_client()
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID"])
- 
+
     try:
         queue_ws = sh.worksheet(SHEET_QUEUE)
     except gspread.WorksheetNotFound:
         print(f"❌ Brak zakładki '{SHEET_QUEUE}'.")
         return
- 
+
     print(f"\n📋 Pobieram domeny z '{SHEET_QUEUE}'...")
     items = get_domains_to_scan(queue_ws)
     print(f"   Do skanowania: {len(items)} domen")
- 
+
     if not items:
-        print("\n⚠️  Brak domen w oknie 28-35 dni. Za wcześnie lub kolejka pusta.")
+        print("\n⚠️  Brak domen w oknie. Za wcześnie lub kolejka pusta.")
         return
- 
+
     results = await scan_domains(items)
- 
-    # Oznacz jako zeskanowane
+
+    # Oznacz wszystkie jako zeskanowane (też te bez platformy)
     all_rows = [item["row"] for item in items]
     print(f"\n✏️  Oznaczam {len(all_rows)} domen jako zeskanowane...")
     mark_as_scanned(queue_ws, all_rows)
- 
+
     if results:
         save_results(sh, results)
         print(f"\n🎉 Znaleziono {len(results)} sklepów po 30 dniach!")
     else:
         print("\n📭 Brak nowych sklepów w tej partii.")
- 
+
     from collections import Counter
     if results:
         print("\n📊 Platformy:")
         for p, n in Counter(r["platform"] for r in results).most_common():
             print(f"   {p}: {n}")
- 
+
+        print("\n🔍 Najczęstsze problemy SEO:")
+        issue_counter: Counter = Counter()
+        for r in results:
+            for issue in r["seo"]["issues"]:
+                issue_counter[issue] += 1
+        for issue, n in issue_counter.most_common(10):
+            print(f"   {issue}: {n}x")
+
 if __name__ == "__main__":
     asyncio.run(main())

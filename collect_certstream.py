@@ -47,9 +47,14 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 SHEET_QUEUE = "Kolejka"
+# Kolumny zgodne z istniejącym arkuszem:
+# A=data_rejestracji, B=domena, C=title, D=strona_dziala, E=url_docelowy,
+# F=platforma, G=rejestrator, H=hosting, I=data_rejestracji_whois,
+# J=zeskanowano, K=data_skanu, L=zrodlo
 HEADER_QUEUE = [
     "data_rejestracji", "domena", "title", "strona_dziala",
-    "url_docelowy", "platforma", "zeskanowano", "data_skanu", "zrodlo",
+    "url_docelowy", "platforma", "rejestrator", "hosting",
+    "data_rejestracji_whois", "zeskanowano", "data_skanu", "zrodlo",
 ]
 
 # TLD które nas interesują
@@ -232,15 +237,18 @@ def certstream_callback(message, context):
             )
 
         row = [
-            today,           # data_rejestracji
-            domain,          # domena
-            "",              # title (wypełni scanner)
-            "",              # strona_dziala
-            "",              # url_docelowy
-            platform_hint,   # platforma (hint z DNS, może być pusta)
-            "NIE",           # zeskanowano
-            "",              # data_skanu
-            f"certstream:{reason}",  # zrodlo
+            today,           # A: data_rejestracji
+            domain,          # B: domena
+            "",              # C: title
+            "",              # D: strona_dziala
+            "",              # E: url_docelowy
+            platform_hint,   # F: platforma (hint z DNS)
+            "",              # G: rejestrator
+            "",              # H: hosting
+            "",              # I: data_rejestracji_whois
+            "NIE",           # J: zeskanowano
+            "",              # K: data_skanu
+            f"certstream:{reason}",  # L: zrodlo
         ]
 
         with lock:

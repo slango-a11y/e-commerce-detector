@@ -28,9 +28,14 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 SHEET_QUEUE  = "Kolejka"
+# Kolumny zgodne z istniejącym arkuszem:
+# A=data_rejestracji, B=domena, C=title, D=strona_dziala, E=url_docelowy,
+# F=platforma, G=rejestrator, H=hosting, I=data_rejestracji_whois,
+# J=zeskanowano, K=data_skanu, L=zrodlo
 HEADER_QUEUE = [
     "data_rejestracji", "domena", "title", "strona_dziala",
-    "url_docelowy", "platforma", "zeskanowano", "data_skanu", "zrodlo",
+    "url_docelowy", "platforma", "rejestrator", "hosting",
+    "data_rejestracji_whois", "zeskanowano", "data_skanu", "zrodlo",
 ]
 
 # ── RSS: AGENCJE + BRANŻOWE ───────────────────────────────────
@@ -351,10 +356,13 @@ def main():
             "",            # title
             "",            # strona_dziala
             "",            # url_docelowy
-            platform_hint,
-            "NIE",
-            "",            # data_skanu
-            source,
+            platform_hint, # F: platforma
+            "",            # G: rejestrator
+            "",            # H: hosting
+            "",            # I: data_rejestracji_whois
+            "NIE",         # J: zeskanowano
+            "",            # K: data_skanu
+            source,        # L: zrodlo
         ])
 
     print(f"\n📊 Nowych kandydatów: {len(new_rows)}")

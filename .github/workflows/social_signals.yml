@@ -1,0 +1,28 @@
+name: "1c. Social Signals — RSS + OLX + GitHub"
+
+on:
+  schedule:
+    - cron: '0 6 * * *'    # 8:00 czasu polskiego, codziennie
+  workflow_dispatch:
+
+jobs:
+  social_signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instaluj zależności
+        run: pip install requests feedparser gspread google-auth beautifulsoup4
+
+      - name: Uruchom social signals
+        run: python collect_social_signals.py
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
